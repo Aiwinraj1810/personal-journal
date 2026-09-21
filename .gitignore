@@ -30,7 +30,9 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
+# local env files — this app embeds the Cloudinary API secret client-side by
+# design (see README), but it still should never land in git history.
+.env
 .env*.local
 
 # typescript

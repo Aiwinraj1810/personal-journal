@@ -1,6 +1,8 @@
-# Welcome to your Expo app 👋
+# personal-journal
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A private, single-user diary app: calendar-based browsing, a rich text editor for entries, mood tagging, inline photos (via Cloudinary), and birthdays/events/reminders with local notifications. Everything you write is stored on-device (SQLite via Drizzle); backups export to a JSON file you control.
+
+Built on Expo SDK 57 / React Native (New Architecture), Expo Router, NativeWind, and TenTap (a Tiptap-based rich text editor).
 
 ## Get started
 
@@ -10,47 +12,57 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    npm install
    ```
 
-2. Start the app
+2. Add your Cloudinary credentials to a `.env` file (see `.env.example`):
 
-   ```bash
-   npx expo start
+   ```
+   EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME=
+   EXPO_PUBLIC_CLOUDINARY_API_KEY=
+   EXPO_PUBLIC_CLOUDINARY_API_SECRET=
    ```
 
-In the output, you'll find options to open the app in a
+3. This app uses native modules (SQLite, notifications, image picker, the rich
+   text editor's WebView, etc.), so it can't run in plain Expo Go — build a
+   dev client first:
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+   ```bash
+   npx expo run:android
+   # or
+   npx expo run:ios
+   ```
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+   After the first native build, `npx expo start` reconnects to that dev
+   client for fast-refresh JS development. Any time a new native module is
+   added, repeat the `run:android`/`run:ios` step.
 
-## Get a fresh project
+## Project structure
 
-When you're ready, run:
+- `src/app/` — Expo Router routes (file-based). `(tabs)/` holds the three
+  main tabs (Home, Calendar, Settings); `entry/`, `event/`, `day/`,
+  `settings/` are stack/modal screens.
+- `src/components/` — reusable UI primitives (`ui/`) and feature components
+  grouped by area (`home/`, `entry/`, `calendar/`, `event/`, `settings/`).
+- `src/db/` — Drizzle schema, SQLite client, and generated migrations.
+- `src/lib/` — framework-agnostic logic: Cloudinary upload/destroy,
+  notification scheduling, backup export/import, date helpers.
+- `src/hooks/` — React hooks wrapping the above for use in components.
+- `src/constants/theme.ts` (+ `theme-tokens.js`) — the single source of
+  design tokens (colors, spacing, radii), shared between the app and
+  `tailwind.config.js`.
 
-```bash
-npm run reset-project
-```
+## Notes on the current build
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-### Other setup steps
-
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+- The Cloudinary API key **and secret** are embedded client-side (signed
+  uploads/deletes are computed on-device) — a deliberate trade-off since this
+  app is private and never distributed. See `src/lib/cloudinary.ts`.
+- Backups (`Settings → Backup & restore`) export entries/events/settings as
+  JSON; photos stay hosted on Cloudinary and are referenced by URL rather
+  than bundled into the export file.
+- `AGENTS.md` has Expo-specific guidance for anyone (human or AI) continuing
+  work on this project — Expo's APIs change frequently between SDK versions.
 
 ## Learn more
 
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- [Expo documentation](https://docs.expo.dev/)
+- [Expo Router](https://docs.expo.dev/router/introduction/)
+- [Drizzle + Expo SQLite](https://orm.drizzle.team/docs/sqlite/connect-expo-sqlite)
+- [TenTap editor](https://10play.github.io/10tap-editor/docs/intro)
