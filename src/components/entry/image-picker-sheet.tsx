@@ -1,6 +1,6 @@
 import { BottomSheetModal } from '@gorhom/bottom-sheet';
 import * as ImagePicker from 'expo-image-picker';
-import { forwardRef } from 'react';
+import { forwardRef, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 
 import { AppBottomSheet } from '@/components/ui/bottom-sheet';
@@ -10,29 +10,48 @@ import { useTheme } from '@/hooks/use-theme';
 import { type CloudinaryImage } from '@/lib/cloudinary';
 
 export type ImagePickerSheetProps = {
-  onPicked: (image: CloudinaryImage) => void;
+  /** Called once with every successfully uploaded image from one pick — a
+   * multi-select library pick reports all of them together (one PhotoBlock,
+   * not one per photo), never one call per photo. */
+  onPicked: (images: CloudinaryImage[]) => void;
 };
 
 async function pickFrom(source: 'camera' | 'library') {
   const options: ImagePicker.ImagePickerOptions = { mediaTypes: ['images'], quality: 0.85, allowsEditing: false };
-  const result = source === 'camera' ? await ImagePicker.launchCameraAsync(options) : await ImagePicker.launchImageLibraryAsync(options);
-  return result.canceled ? null : result.assets[0];
+  if (source === 'camera') {
+    const result = await ImagePicker.launchCameraAsync(options);
+    return result.canceled ? [] : result.assets.slice(0, 1);
+  }
+  const result = await ImagePicker.launchImageLibraryAsync({ ...options, allowsMultipleSelection: true, selectionLimit: 0 });
+  return result.canceled ? [] : result.assets;
 }
 
-/** Bottom sheet offering "Take Photo" / "Choose from Library", then uploads the
- * picked image to Cloudinary and reports the result via `onPicked`. */
+/** Bottom sheet offering "Take Photo" / "Choose from Library" (multi-select),
+ * then uploads every picked image to Cloudinary — sequentially, so upload
+ * progress ("2 of 5") is simple to show and a mobile connection isn't asked
+ * to carry several simultaneous signed uploads — and reports the results via
+ * `onPicked`. */
 export const ImagePickerSheet = forwardRef<BottomSheetModal, ImagePickerSheetProps>(function ImagePickerSheet(
   { onPicked },
   ref,
 ) {
   const theme = useTheme();
   const { upload, isUploading, error } = useCloudinaryUpload();
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   async function handlePick(source: 'camera' | 'library') {
-    const asset = await pickFrom(source);
-    if (!asset) return;
-    const uploaded = await upload(asset.uri);
-    if (uploaded) onPicked(uploaded);
+    const assets = await pickFrom(source);
+    if (assets.length === 0) return;
+
+    const uploaded: CloudinaryImage[] = [];
+    for (const [index, asset] of assets.entries()) {
+      setProgress({ done: index, total: assets.length });
+      const result = await upload(asset.uri);
+      if (result) uploaded.push(result);
+    }
+    setProgress(null);
+
+    if (uploaded.length > 0) onPicked(uploaded);
   }
 
   return (
@@ -42,7 +61,7 @@ export const ImagePickerSheet = forwardRef<BottomSheetModal, ImagePickerSheetPro
           <View className="items-center gap-three py-five">
             <ActivityIndicator color={theme.text} />
             <Text className="font-sans text-[14px]" style={{ color: theme.textSecondary }}>
-              Uploading…
+              {progress && progress.total > 1 ? `Uploading ${progress.done + 1} of ${progress.total}…` : 'Uploading…'}
             </Text>
           </View>
         ) : (

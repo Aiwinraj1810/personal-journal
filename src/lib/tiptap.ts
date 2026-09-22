@@ -20,18 +20,28 @@ export function parseTiptapDoc(json: string): TiptapNode {
   }
 }
 
-function isImageWithPublicId(node: TiptapNode, publicId: string): boolean {
-  const src = node.attrs?.src;
-  return node.type === 'image' && typeof src === 'string' && src.includes(publicId);
-}
+/** Recursively strips every `image` node out of a legacy (pre-block-model)
+ * Tiptap document, returning the cleaned doc plus the `src` of every image
+ * found, in document order. Used only by the one-time legacy-blocks
+ * migration (see @/db/migrate-legacy-blocks) to split an old single-document
+ * entry into a TextBlock (the cleaned doc) and a PhotoBlock (the images,
+ * matched back to their `entry_images` row by URL). */
+export function extractAndStripImages(doc: TiptapNode): { doc: TiptapNode; imageSrcs: string[] } {
+  const imageSrcs: string[] = [];
 
-/** Recursively strips any `image` node whose `src` references `publicId` —
- * used when a user removes a photo's thumbnail chip in the composer, so the
- * embedded copy inside the body disappears too, not just the chip. */
-export function removeImageByPublicId(doc: TiptapNode, publicId: string): TiptapNode {
-  if (!doc.content) return doc;
-  return {
-    ...doc,
-    content: doc.content.filter((child) => !isImageWithPublicId(child, publicId)).map((child) => removeImageByPublicId(child, publicId)),
-  };
+  function strip(node: TiptapNode): TiptapNode {
+    if (!node.content) return node;
+    const content: TiptapNode[] = [];
+    for (const child of node.content) {
+      if (child.type === 'image') {
+        const src = child.attrs?.src;
+        if (typeof src === 'string') imageSrcs.push(src);
+        continue;
+      }
+      content.push(strip(child));
+    }
+    return { ...node, content };
+  }
+
+  return { doc: strip(doc), imageSrcs };
 }

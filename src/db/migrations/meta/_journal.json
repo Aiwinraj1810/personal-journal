@@ -8,6 +8,20 @@
       "when": 1790005692157,
       "tag": "0000_gorgeous_maria_hill",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1790387280000,
+      "tag": "0001_block_based_journal",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1790400000000,
+      "tag": "0002_event_reminders",
+      "breakpoints": true
     }
   ]
 }

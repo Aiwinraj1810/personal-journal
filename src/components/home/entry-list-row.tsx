@@ -5,22 +5,21 @@ import { Text, View } from 'react-native';
 import { MoodBadge } from '@/components/entry/mood-badge';
 import { PressableCard } from '@/components/ui/card';
 import { useTheme } from '@/hooks/use-theme';
-import { type EntryWithImages } from '@/hooks/use-entries';
+import { type ParsedJournalEntry } from '@/hooks/use-entries';
 import { formatEntryTimestamp } from '@/lib/date';
 
-export type EntryListRowProps = { entry: EntryWithImages };
+export type EntryListRowProps = { entry: ParsedJournalEntry };
 
 /** A Recent Entries list row — thumbnail, title, timestamp, mood. */
 export function EntryListRow({ entry }: EntryListRowProps) {
   const theme = useTheme();
-  const cover = entry.images.find((image) => image.isCover) ?? entry.images[0];
 
   return (
     <PressableCard
       className="flex-row items-center gap-three p-two"
       onPress={() => router.push({ pathname: '/entry/[id]', params: { id: entry.id } })}>
-      {cover ? (
-        <Image source={{ uri: cover.cloudinaryUrl }} style={{ width: 56, height: 56, borderRadius: 14 }} contentFit="cover" />
+      {entry.coverImageUrl ? (
+        <Image source={{ uri: entry.coverImageUrl }} style={{ width: 56, height: 56, borderRadius: 14 }} contentFit="cover" />
       ) : (
         <View className="rounded-small" style={{ width: 56, height: 56, backgroundColor: theme.backgroundSelected }} />
       )}

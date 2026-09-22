@@ -1,21 +1,22 @@
-import { type EditorBridge, RichText, Toolbar } from '@10play/tentap-editor';
-import { KeyboardAvoidingView, Platform, View } from 'react-native';
+import { type EditorBridge, Toolbar } from '@10play/tentap-editor';
+import { KeyboardAvoidingView, Platform } from 'react-native';
 
-export type RichTextEditorProps = { editor: EditorBridge };
+export type EditorToolbarProps = { editor: EditorBridge | undefined };
 
-/** Thin presentational wrapper around TenTap's editor + toolbar. The bridge
- * itself — including content CSS (padding, image sizing, custom font) — is
- * created by `useJournalEditor` in the owning screen, since the screen needs
- * the bridge too (to call `editor.getJSON()` on save). */
-export function RichTextEditor({ editor }: RichTextEditorProps) {
+/** The composer's one shared formatting toolbar, fixed to the screen bottom.
+ * Each Text Block owns its own `RichText`/editor instance (see
+ * components/journal/text-block.tsx), but only one Toolbar is ever mounted —
+ * bound to whichever block is currently focused — since the toolbar's
+ * absolute-bottom positioning only resolves correctly as a sibling of the
+ * composer's ScrollView, not nested inside one scrolling block's own view.
+ * Renders nothing while no Text Block is focused. */
+export function EditorToolbar({ editor }: EditorToolbarProps) {
+  if (!editor) return null;
   return (
-    <View style={{ flex: 1 }}>
-      <RichText editor={editor} />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ position: 'absolute', width: '100%', bottom: 0 }}>
-        <Toolbar editor={editor} />
-      </KeyboardAvoidingView>
-    </View>
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      style={{ position: 'absolute', width: '100%', bottom: 0 }}>
+      <Toolbar editor={editor} />
+    </KeyboardAvoidingView>
   );
 }

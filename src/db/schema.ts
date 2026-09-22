@@ -10,6 +10,11 @@ export type CalendarEventType = 'birthday' | 'event' | 'reminder';
 /** 'none' | 'yearly' — only birthdays use 'yearly' today. */
 export type EventRecurrence = 'none' | 'yearly';
 
+/** How long before (or "at") the parent Event/Birthday's date+time a reminder
+ * fires. See @/lib/reminders for the in-memory `ReminderOffset` union this
+ * pair of columns represents — `offsetValue` is unused (null) for 'at_time'. */
+export type ReminderOffsetType = 'at_time' | 'minutes_before' | 'hours_before' | 'days_before';
+
 export const entries = sqliteTable(
   'entries',
   {
@@ -17,17 +22,29 @@ export const entries = sqliteTable(
     /** 'YYYY-MM-DD' — the diary day this entry belongs to. */
     entryDate: text('entry_date').notNull(),
     title: text('title').notNull(),
-    /** Serialized Tiptap/ProseMirror JSON document from the rich text editor. */
-    bodyJson: text('body_json').notNull(),
-    /** Denormalized plaintext extract of bodyJson, for search/snippets. */
+    /** Serialized JournalBlock[] — see @/lib/journal-blocks. */
+    blocksJson: text('blocks_json').notNull(),
+    /** Denormalized plaintext extract of blocksJson, for search/snippets. */
     bodyPlainText: text('body_plain_text').notNull(),
     mood: text('mood').$type<MoodCode>(),
+    /** Serialized string[]. */
+    tags: text('tags').notNull().default('[]'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
+    /** Soft delete — null means active. Never hard-deleted, for future sync. */
+    deletedAt: integer('deleted_at'),
+    /** Denormalized from the first photo block in document order, so Home
+     * thumbnails don't need a join against entry_images. */
+    coverImageUrl: text('cover_image_url'),
+    coverImageWidth: integer('cover_image_width'),
+    coverImageHeight: integer('cover_image_height'),
   },
   (table) => [index('entries_entry_date_idx').on(table.entryDate)],
 );
 
+/** Legacy side table — superseded by photos living directly inside PhotoBlocks
+ * in entries.blocksJson. No longer written to by the app; kept only so old
+ * rows/backups stay readable until a later migration drops it entirely. */
 export const entryImages = sqliteTable(
   'entry_images',
   {
@@ -59,13 +76,34 @@ export const calendarEvents = sqliteTable(
     /** 'HH:mm' 24h, nullable — null means all-day, no notification time. */
     time: text('time'),
     recurrence: text('recurrence').$type<EventRecurrence>().notNull().default('none'),
-    notifyEnabled: integer('notify_enabled', { mode: 'boolean' }).notNull().default(true),
-    /** expo-notifications scheduled identifier, so it can be cancelled/rescheduled on edit. */
-    notificationIdentifier: text('notification_identifier'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },
   (table) => [index('calendar_events_date_idx').on(table.date), index('calendar_events_type_idx').on(table.type)],
+);
+
+/** A reminder configuration attached to an Event/Birthday — the event/birthday
+ * itself stays the source of truth (title/date/time/notes); a reminder only
+ * describes *when relative to that* a notification should fire. One event can
+ * have several of these (see @/lib/reminders for the offset presets). Mirrors
+ * the entryImages child-table pattern already used elsewhere in this schema. */
+export const calendarEventReminders = sqliteTable(
+  'calendar_event_reminders',
+  {
+    id: text('id').primaryKey(),
+    eventId: text('event_id')
+      .notNull()
+      .references(() => calendarEvents.id, { onDelete: 'cascade' }),
+    offsetType: text('offset_type').$type<ReminderOffsetType>().notNull(),
+    /** Magnitude for minutes/hours/days_before; null for at_time. */
+    offsetValue: integer('offset_value'),
+    enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+    /** expo-notifications scheduled identifier for THIS reminder — device-
+     * local, never treated as portable backup data (see lib/backup.ts). */
+    notificationIdentifier: text('notification_identifier'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [index('calendar_event_reminders_event_id_idx').on(table.eventId)],
 );
 
 export const appSettings = sqliteTable('app_settings', {
@@ -79,4 +117,12 @@ export const entriesRelations = relations(entries, ({ many }) => ({
 
 export const entryImagesRelations = relations(entryImages, ({ one }) => ({
   entry: one(entries, { fields: [entryImages.entryId], references: [entries.id] }),
+}));
+
+export const calendarEventsRelations = relations(calendarEvents, ({ many }) => ({
+  reminders: many(calendarEventReminders),
+}));
+
+export const calendarEventRemindersRelations = relations(calendarEventReminders, ({ one }) => ({
+  event: one(calendarEvents, { fields: [calendarEventReminders.eventId], references: [calendarEvents.id] }),
 }));

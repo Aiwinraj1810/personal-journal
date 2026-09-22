@@ -1,10 +1,10 @@
 import { Text, View } from 'react-native';
 
 import { EntryGridTile } from '@/components/home/entry-grid-tile';
-import { type EntryWithImages } from '@/hooks/use-entries';
+import { type ParsedJournalEntry } from '@/hooks/use-entries';
 import { useTheme } from '@/hooks/use-theme';
 
-export type EntriesGridSectionProps = { title: string; entries: EntryWithImages[] };
+export type EntriesGridSectionProps = { title: string; entries: ParsedJournalEntry[] };
 
 /** One of Home's "Today / Yesterday / Older" sections — a 2-column grid of
  * tiles. Renders nothing when the section has no entries, so an empty

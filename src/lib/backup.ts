@@ -3,19 +3,30 @@ import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
+import { wrapLegacyEntryAsBlocks } from '@/db/migrate-legacy-blocks';
 import { db } from '@/db/client';
-import { appSettings, calendarEvents, entries, entryImages } from '@/db/schema';
+import { appSettings, calendarEventReminders, calendarEvents, entries, entryImages } from '@/db/schema';
+import { parseBlocks, serializeBlocks } from '@/lib/journal-blocks';
 
-import { cancelEventNotification, syncEventNotification } from './notifications';
+import { uuid } from './id';
+import { cancelReminderNotification, scheduleReminder, type ReminderParentEvent } from './notifications';
+import { offsetFromColumns } from './reminders';
 
-export const BACKUP_FORMAT_VERSION = 1;
+export const BACKUP_FORMAT_VERSION = 3;
+const SUPPORTED_BACKUP_VERSIONS = [1, 2, 3];
 
 export type BackupPayload = {
   backupFormatVersion: number;
   exportedAt: number;
   entries: (typeof entries.$inferSelect)[];
+  /** Exported for continuity with v1 backups, but no longer the source of
+   * truth for anything — photos live inside each entry's blocksJson now. */
   entryImages: (typeof entryImages.$inferSelect)[];
   calendarEvents: (typeof calendarEvents.$inferSelect)[];
+  /** Absent on v1/v2 files — reminders didn't exist as their own table yet.
+   * `notificationIdentifier` is device-local and never trusted on import;
+   * every reminder is rescheduled fresh after restore (see importBackup). */
+  calendarEventReminders: (typeof calendarEventReminders.$inferSelect)[];
   appSettings: (typeof appSettings.$inferSelect)[];
 };
 
@@ -27,6 +38,7 @@ function isBackupPayload(value: unknown): value is BackupPayload {
     Array.isArray(v.entries) &&
     Array.isArray(v.entryImages) &&
     Array.isArray(v.calendarEvents) &&
+    (v.calendarEventReminders === undefined || Array.isArray(v.calendarEventReminders)) &&
     Array.isArray(v.appSettings)
   );
 }
@@ -36,10 +48,11 @@ function isBackupPayload(value: unknown): value is BackupPayload {
  * Cloudinary URL/publicId — Cloudinary is the permanent image store, per the
  * plan's accepted trade-off — so the file itself stays small and fast. */
 export async function exportBackup(): Promise<void> {
-  const [allEntries, allImages, allEvents, allSettings] = await Promise.all([
+  const [allEntries, allImages, allEvents, allReminders, allSettings] = await Promise.all([
     db.select().from(entries),
     db.select().from(entryImages),
     db.select().from(calendarEvents),
+    db.select().from(calendarEventReminders),
     db.select().from(appSettings),
   ]);
 
@@ -49,6 +62,7 @@ export async function exportBackup(): Promise<void> {
     entries: allEntries,
     entryImages: allImages,
     calendarEvents: allEvents,
+    calendarEventReminders: allReminders,
     appSettings: allSettings,
   };
 
@@ -67,11 +81,67 @@ export async function exportBackup(): Promise<void> {
 
 export type ImportResult = { entries: number; images: number; events: number };
 
+/** Migrates a pre-v3 payload's journal-block shape (v1) and event-reminder
+ * shape (v1/v2) to the current one. For reminders: v1/v2 backups never had a
+ * `calendar_event_reminders` table at all — each event row instead carried
+ * its own legacy `notifyEnabled`/`notificationIdentifier` columns directly
+ * (still present as plain properties in that old JSON, even though the
+ * current schema/type no longer has them). Every enabled legacy event
+ * becomes one synthesized 'at_time' reminder row, mirroring exactly what the
+ * one-time on-device SQL migration did for existing local rows. Regardless
+ * of version, every reminder's `notificationIdentifier` is nulled out here —
+ * imported identifiers are inert on this device either way, and the fresh
+ * reschedule pass in importBackup is what actually populates them. */
+function migrateLegacyPayload(payload: BackupPayload): BackupPayload {
+  const migratedEntries =
+    payload.backupFormatVersion >= 2
+      ? payload.entries
+      : payload.entries.map((entryRow) => {
+          const imageRows = payload.entryImages.filter((img) => img.entryId === entryRow.id);
+          // A real v1 backup file was written under the pre-refactor schema, so its
+          // JSON still uses the old `bodyJson` property name — the `blocksJson`
+          // field on the (now current-schema-typed) `entryRow` won't actually be
+          // present on disk for these. Normalize before handing off to the shared
+          // legacy-wrap transform, which always reads `blocksJson`.
+          const legacyRow = { ...entryRow, blocksJson: (entryRow as { bodyJson?: string }).bodyJson ?? entryRow.blocksJson };
+          const result = wrapLegacyEntryAsBlocks(legacyRow, imageRows);
+          return {
+            ...entryRow,
+            blocksJson: serializeBlocks(result.blocks),
+            tags: '[]',
+            deletedAt: null,
+            coverImageUrl: result.coverImageUrl,
+            coverImageWidth: result.coverImageWidth,
+            coverImageHeight: result.coverImageHeight,
+          };
+        });
+
+  let migratedReminders = (payload.calendarEventReminders ?? []).map((r) => ({ ...r, notificationIdentifier: null }));
+
+  if (payload.backupFormatVersion < 3) {
+    const legacySynthesized = payload.calendarEvents
+      .filter((eventRow) => (eventRow as unknown as { notifyEnabled?: boolean }).notifyEnabled)
+      .map((eventRow) => ({
+        id: uuid(),
+        eventId: eventRow.id,
+        offsetType: 'at_time' as const,
+        offsetValue: null,
+        enabled: true,
+        notificationIdentifier: null,
+        createdAt: eventRow.createdAt,
+      }));
+    migratedReminders = [...migratedReminders, ...legacySynthesized];
+  }
+
+  return { ...payload, entries: migratedEntries, calendarEventReminders: migratedReminders };
+}
+
 /** Picks a backup JSON file, validates it, then replaces the entire local
- * database with its contents and reschedules every notify-enabled event's
- * notification fresh (imported `notificationIdentifier` values are inert — the
- * OS-level schedule never traveled with the file). Returns null if the user
- * cancelled the picker. */
+ * database with its contents and reschedules every enabled reminder's
+ * notification fresh — imported `notificationIdentifier` values are inert,
+ * since the OS-level schedule never traveled with the file (per-event
+ * notifications) or table (per-reminder notifications). Returns null if the
+ * user cancelled the picker. */
 export async function importBackup(): Promise<ImportResult | null> {
   const picked = await DocumentPicker.getDocumentAsync({ type: 'application/json', copyToCacheDirectory: true });
   if (picked.canceled || !picked.assets[0]) return null;
@@ -88,15 +158,17 @@ export async function importBackup(): Promise<ImportResult | null> {
   if (!isBackupPayload(payload)) {
     throw new Error('That file does not look like a personal-journal backup.');
   }
-  if (payload.backupFormatVersion !== BACKUP_FORMAT_VERSION) {
+  if (!SUPPORTED_BACKUP_VERSIONS.includes(payload.backupFormatVersion)) {
     throw new Error(`Unsupported backup format version: ${payload.backupFormatVersion}.`);
   }
 
-  // Cancel every currently-scheduled notification before the wipe below —
-  // their identifiers are about to be discarded either way.
-  const existingEvents = await db.select().from(calendarEvents);
+  const migratedPayload = migrateLegacyPayload({ ...payload, calendarEventReminders: payload.calendarEventReminders ?? [] });
+
+  // Cancel every currently-scheduled reminder notification before the wipe
+  // below — their identifiers are about to be discarded either way.
+  const existingReminders = await db.select().from(calendarEventReminders);
   await Promise.all(
-    existingEvents.filter((e) => e.notificationIdentifier).map((e) => cancelEventNotification(e.notificationIdentifier!)),
+    existingReminders.filter((r) => r.notificationIdentifier).map((r) => cancelReminderNotification(r.notificationIdentifier!)),
   );
 
   // Note: expo-sqlite's drizzle driver doesn't fully roll back on error mid-
@@ -106,29 +178,57 @@ export async function importBackup(): Promise<ImportResult | null> {
   await db.transaction(async (tx) => {
     await tx.delete(entryImages);
     await tx.delete(entries);
+    await tx.delete(calendarEventReminders);
     await tx.delete(calendarEvents);
     await tx.delete(appSettings);
 
-    if (payload.entries.length) await tx.insert(entries).values(payload.entries);
-    if (payload.entryImages.length) await tx.insert(entryImages).values(payload.entryImages);
-    if (payload.calendarEvents.length) await tx.insert(calendarEvents).values(payload.calendarEvents);
-    if (payload.appSettings.length) await tx.insert(appSettings).values(payload.appSettings);
+    if (migratedPayload.entries.length) await tx.insert(entries).values(migratedPayload.entries);
+    if (migratedPayload.entryImages.length) await tx.insert(entryImages).values(migratedPayload.entryImages);
+    if (migratedPayload.calendarEvents.length) await tx.insert(calendarEvents).values(migratedPayload.calendarEvents);
+    if (migratedPayload.calendarEventReminders.length) {
+      await tx.insert(calendarEventReminders).values(migratedPayload.calendarEventReminders);
+    }
+    if (migratedPayload.appSettings.length) await tx.insert(appSettings).values(migratedPayload.appSettings);
   });
 
-  const importedEvents = await db.select().from(calendarEvents);
+  const [importedEvents, importedReminders] = await Promise.all([
+    db.select().from(calendarEvents),
+    db.select().from(calendarEventReminders),
+  ]);
+  const eventsById = new Map(importedEvents.map((e) => [e.id, e]));
+
   await Promise.all(
-    importedEvents
-      .filter((e) => e.notifyEnabled && e.time)
-      .map(async (e) => {
-        const identifier = await syncEventNotification(
-          { type: e.type, title: e.title, notes: e.notes, date: e.date, time: e.time, recurrence: e.recurrence },
-          null,
-        );
-        if (identifier) {
-          await db.update(calendarEvents).set({ notificationIdentifier: identifier }).where(eq(calendarEvents.id, e.id));
+    importedReminders
+      .filter((r) => r.enabled)
+      .map(async (r) => {
+        const event = eventsById.get(r.eventId);
+        if (!event) return;
+        const parent: ReminderParentEvent = {
+          type: event.type,
+          title: event.title,
+          notes: event.notes,
+          date: event.date,
+          time: event.time,
+          recurrence: event.recurrence,
+        };
+        const notificationIdentifier = await scheduleReminder(parent, offsetFromColumns(r.offsetType, r.offsetValue));
+        if (notificationIdentifier) {
+          await db.update(calendarEventReminders).set({ notificationIdentifier }).where(eq(calendarEventReminders.id, r.id));
         }
       }),
   );
 
-  return { entries: payload.entries.length, images: payload.entryImages.length, events: payload.calendarEvents.length };
+  return { entries: migratedPayload.entries.length, images: countPhotos(migratedPayload.entries), events: migratedPayload.calendarEvents.length };
+}
+
+/** Total photo count across every imported entry's blocks — photos live
+ * inside `blocksJson` now, not the (unused, continuity-only) `entryImages`
+ * table, so the import summary needs to count them this way to stay
+ * meaningful for v2+ backups. */
+function countPhotos(entryRows: BackupPayload['entries']): number {
+  return entryRows.reduce((total, row) => {
+    const blocks = parseBlocks(row.blocksJson);
+    const photosInRow = blocks.reduce((count, block) => count + (block.type === 'photos' ? block.photos.length : 0), 0);
+    return total + photosInRow;
+  }, 0);
 }

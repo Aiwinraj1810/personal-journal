@@ -67,6 +67,11 @@ export function formatShortDate(key: DateKey): string {
   return format(fromDateKey(key), 'MMM d, yyyy');
 }
 
+/** "February 9, 2026" — full-month date for the Home memory cards. */
+export function formatLongDate(key: DateKey): string {
+  return format(fromDateKey(key), 'MMMM d, yyyy');
+}
+
 /** "20:35" — 24h time from a unix-ms timestamp, for entry list rows. */
 export function formatTime(unixMs: number): string {
   return format(new Date(unixMs), 'HH:mm');

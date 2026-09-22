@@ -1,45 +1,85 @@
+import { type EditorBridge, RichText, useBridgeState } from '@10play/tentap-editor';
 import { Image } from 'expo-image';
-import { type ReactNode } from 'react';
+import { type ReactNode, useEffect } from 'react';
 import { Platform, Text, View } from 'react-native';
 
 import { FontFamily } from '@/constants/fonts';
+import { useJournalEditor } from '@/hooks/use-journal-editor';
 import { useTheme } from '@/hooks/use-theme';
-import { parseTiptapDoc, type TiptapNode } from '@/lib/tiptap';
+import type { TextBlock } from '@/lib/journal-blocks';
+import { type TiptapNode } from '@/lib/tiptap';
 
 const MONO_FONT = Platform.select({ ios: 'ui-monospace', default: 'monospace' });
 
-export type RichContentViewProps = { bodyJson: string };
+/** A fixed height for each Text Block's editor, with TenTap's default
+ * internal scroll for anything beyond it — see the long comment in
+ * useJournalEditor for why this isn't `dynamicHeight` instead. Roomy enough
+ * for a few paragraphs before scrolling kicks in. */
+const TEXT_BLOCK_HEIGHT = 220;
 
-/** Renders a saved entry's Tiptap JSON as plain native components — a "news
- * article" reading layout (headings, paragraphs, images, lists, quotes) —
- * rather than re-opening it in the WebView editor. This is deliberately not
- * the same code path as the editable composer: reading doesn't need an
- * editable WebView at all, and native Text gives real typographic control
- * (line-height, paragraph spacing) that CSS-in-a-WebView can't match as
- * reliably here. */
-export function RichContentView({ bodyJson }: RichContentViewProps) {
+export type TextBlockViewProps = {
+  block: TextBlock;
+  mode: 'edit' | 'read';
+  /** Edit mode only — the composer needs each Text Block's live editor bridge
+   * to pull its content via `getJSON()` at save time, and to bind the single
+   * shared Toolbar to whichever block is currently focused (a per-block
+   * Toolbar can't be used here: it's fixed to the screen bottom via absolute
+   * positioning, which only resolves correctly as a sibling of the
+   * composer's ScrollView, not nested inside one block's own view). */
+  onRegisterEditor?: (blockId: string, editor: EditorBridge) => void;
+  onUnregisterEditor?: (blockId: string) => void;
+  onFocusChange?: (blockId: string, focused: boolean, editor: EditorBridge) => void;
+};
+
+export function TextBlockView({ block, mode, onRegisterEditor, onUnregisterEditor, onFocusChange }: TextBlockViewProps) {
+  if (mode === 'read') return <TextBlockRead block={block} />;
+  return <TextBlockEdit block={block} onRegisterEditor={onRegisterEditor} onUnregisterEditor={onUnregisterEditor} onFocusChange={onFocusChange} />;
+}
+
+function TextBlockEdit({
+  block,
+  onRegisterEditor,
+  onUnregisterEditor,
+  onFocusChange,
+}: Omit<TextBlockViewProps, 'mode'>) {
+  const editor = useJournalEditor(block.content);
+  const editorState = useBridgeState(editor);
+
+  useEffect(() => {
+    onRegisterEditor?.(block.id, editor);
+    return () => onUnregisterEditor?.(block.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [block.id]);
+
+  useEffect(() => {
+    onFocusChange?.(block.id, editorState.isFocused, editor);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [block.id, editorState.isFocused, onFocusChange]);
+
+  return (
+    <View style={{ height: TEXT_BLOCK_HEIGHT }}>
+      <RichText editor={editor} />
+    </View>
+  );
+}
+
+function TextBlockRead({ block }: { block: TextBlock }) {
   const theme = useTheme();
-  const doc = parseTiptapDoc(bodyJson);
-  const blocks = doc.content ?? [];
+  const doc = block.content as TiptapNode;
+  const nodes = doc.content ?? [];
 
-  if (blocks.length === 0) {
-    return (
-      <Text className="font-sans text-[16px]" style={{ color: theme.textSecondary }}>
-        No content.
-      </Text>
-    );
-  }
+  if (nodes.length === 0) return null;
 
   return (
     <View className="gap-four">
-      {blocks.map((node, index) => (
-        <Block key={index} node={node} theme={theme} />
+      {nodes.map((node, index) => (
+        <ReadNode key={index} node={node} theme={theme} />
       ))}
     </View>
   );
 }
 
-function Block({ node, theme }: { node: TiptapNode; theme: ReturnType<typeof useTheme> }) {
+function ReadNode({ node, theme }: { node: TiptapNode; theme: ReturnType<typeof useTheme> }) {
   switch (node.type) {
     case 'heading': {
       const level = (node.attrs?.level as number) ?? 1;
@@ -102,6 +142,12 @@ function Block({ node, theme }: { node: TiptapNode; theme: ReturnType<typeof use
           ))}
         </View>
       );
+    case 'horizontalRule':
+      return <View style={{ height: 1, backgroundColor: theme.backgroundSelected }} />;
+    // Text Blocks never contain inline images in the new block model — a
+    // legacy `image` node can only appear here if the one-time migration
+    // (see @/db/migrate-legacy-blocks) somehow missed stripping it, so this
+    // stays only as a defensive fallback, not an expected path.
     case 'image':
       return (
         <Image
@@ -110,8 +156,6 @@ function Block({ node, theme }: { node: TiptapNode; theme: ReturnType<typeof use
           contentFit="cover"
         />
       );
-    case 'horizontalRule':
-      return <View style={{ height: 1, backgroundColor: theme.backgroundSelected }} />;
     default:
       return null;
   }
@@ -148,4 +192,3 @@ function renderInline(nodes: TiptapNode[] | undefined, theme: ReturnType<typeof 
     );
   });
 }
-

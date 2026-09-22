@@ -5,12 +5,14 @@ import { Alert, Pressable, ScrollView, Switch, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/ui/button';
+import { Icon } from '@/components/ui/icon';
 import { IconButton } from '@/components/ui/icon-button';
 import { TextInput } from '@/components/ui/text-input';
 import { type CalendarEventType } from '@/db/schema';
 import { type CalendarEvent, createEvent, deleteEvent, updateEvent } from '@/hooks/use-calendar-events';
 import { useTheme } from '@/hooks/use-theme';
 import { fromDateKey, toDateKey } from '@/lib/date';
+import { offsetFromColumns, offsetLabel, offsetsEqual, REMINDER_PRESETS, type ReminderOffset } from '@/lib/reminders';
 
 const TYPE_OPTIONS: { value: CalendarEventType; label: string }[] = [
   { value: 'event', label: 'Event' },
@@ -37,10 +39,29 @@ export function EventForm({ existingEvent }: EventFormProps) {
     }
     return d;
   });
-  const [notifyEnabled, setNotifyEnabled] = useState(existingEvent?.notifyEnabled ?? true);
+  const [selectedReminders, setSelectedReminders] = useState<ReminderOffset[]>(
+    () =>
+      existingEvent?.reminders
+        .filter((r) => r.enabled)
+        .map((r) => offsetFromColumns(r.offsetType, r.offsetValue)) ?? [],
+  );
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  function toggleReminder(offset: ReminderOffset) {
+    setSelectedReminders((prev) =>
+      prev.some((r) => offsetsEqual(r, offset)) ? prev.filter((r) => !offsetsEqual(r, offset)) : [...prev, offset],
+    );
+  }
+
+  function handlePermissionDenied(onDone: () => void) {
+    Alert.alert(
+      'Notifications are off',
+      'This was saved, but reminders won’t fire until notifications are enabled for this app.',
+      [{ text: 'OK', onPress: onDone }],
+    );
+  }
 
   async function handleSave() {
     if (!title.trim()) {
@@ -56,15 +77,16 @@ export function EventForm({ existingEvent }: EventFormProps) {
         date: toDateKey(date),
         time: allDay ? null : `${String(time.getHours()).padStart(2, '0')}:${String(time.getMinutes()).padStart(2, '0')}`,
         recurrence: type === 'birthday' ? ('yearly' as const) : ('none' as const),
-        notifyEnabled,
+        reminders: selectedReminders.map((offset) => ({ offset, enabled: true })),
       };
 
-      if (existingEvent) {
-        await updateEvent(existingEvent.id, input, existingEvent.notificationIdentifier);
+      const result = existingEvent ? await updateEvent(existingEvent.id, input) : await createEvent(input);
+
+      if (result.permissionDenied) {
+        handlePermissionDenied(() => router.back());
       } else {
-        await createEvent(input);
+        router.back();
       }
-      router.back();
     } finally {
       setIsSaving(false);
     }
@@ -78,7 +100,7 @@ export function EventForm({ existingEvent }: EventFormProps) {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          await deleteEvent(existingEvent.id, existingEvent.notificationIdentifier);
+          await deleteEvent(existingEvent.id);
           router.back();
         },
       },
@@ -151,7 +173,16 @@ export function EventForm({ existingEvent }: EventFormProps) {
             <Text className="font-sans-medium text-[15px]" style={{ color: theme.text }}>
               All day
             </Text>
-            <Switch value={allDay} onValueChange={setAllDay} />
+            <Switch
+              value={allDay}
+              onValueChange={(value) => {
+                setAllDay(value);
+                // A reminder always fires at a specific time, so an all-day
+                // event (no time) can't carry one — clear rather than leave
+                // a config selected that silently never schedules anything.
+                if (value) setSelectedReminders([]);
+              }}
+            />
           </View>
 
           {!allDay && (
@@ -178,12 +209,29 @@ export function EventForm({ existingEvent }: EventFormProps) {
             </Field>
           )}
 
-          <View className="flex-row items-center justify-between">
-            <Text className="font-sans-medium text-[15px]" style={{ color: theme.text }}>
-              Remind me
-            </Text>
-            <Switch value={notifyEnabled} onValueChange={setNotifyEnabled} />
-          </View>
+          {!allDay && (
+            <Field label="Remind me" theme={theme}>
+              <View className="gap-two">
+                {REMINDER_PRESETS.map((preset) => {
+                  const checked = selectedReminders.some((r) => offsetsEqual(r, preset));
+                  return (
+                    <Pressable
+                      key={offsetLabel(preset)}
+                      accessibilityRole="checkbox"
+                      accessibilityState={{ checked }}
+                      onPress={() => toggleReminder(preset)}
+                      className="flex-row items-center gap-three rounded-small px-three py-three"
+                      style={{ backgroundColor: theme.backgroundElement }}>
+                      <Icon name={checked ? 'checkmark-circle' : 'ellipse-outline'} size={20} color={checked ? theme.text : undefined} muted={!checked} />
+                      <Text className="font-sans text-[15px]" style={{ color: theme.text }}>
+                        {offsetLabel(preset)}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </Field>
+          )}
 
           <TextInput
             value={notes}

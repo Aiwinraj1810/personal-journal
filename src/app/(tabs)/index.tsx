@@ -7,6 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CalendarWeekStrip } from '@/components/home/calendar-week-strip';
 import { EntriesGridSection } from '@/components/home/entries-grid-section';
 import { EntryListRow } from '@/components/home/entry-list-row';
+import { MemoriesSection } from '@/components/home/memories-section';
 import { SearchBar } from '@/components/home/search-bar';
 import { Fab } from '@/components/ui/fab';
 import { IconButton } from '@/components/ui/icon-button';
@@ -89,6 +90,7 @@ export default function HomeScreen() {
           ) : (
             <View className="mt-five gap-five">
               <EntriesGridSection title="Today" entries={todayEntries} />
+              <MemoriesSection />
               <EntriesGridSection title="Yesterday" entries={yesterdayEntries} />
               <EntriesGridSection title="Older" entries={olderEntries} />
               {recentEntries.length === 0 && (

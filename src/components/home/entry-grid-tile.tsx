@@ -4,11 +4,11 @@ import { Text, View } from 'react-native';
 
 import { MoodBadge } from '@/components/entry/mood-badge';
 import { PressableCard } from '@/components/ui/card';
-import { type EntryWithImages } from '@/hooks/use-entries';
+import { type ParsedJournalEntry } from '@/hooks/use-entries';
 import { useTheme } from '@/hooks/use-theme';
 import { formatTime } from '@/lib/date';
 
-export type EntryGridTileProps = { entry: EntryWithImages };
+export type EntryGridTileProps = { entry: ParsedJournalEntry };
 
 /** A square tile for the Home "Today / Yesterday / Older" grid sections —
  * cover photo (or a plain fallback surface), mood badge, title, and time
@@ -16,14 +16,13 @@ export type EntryGridTileProps = { entry: EntryWithImages };
  * self-sized for a multi-column grid instead of a single fixed-height row. */
 export function EntryGridTile({ entry }: EntryGridTileProps) {
   const theme = useTheme();
-  const cover = entry.images.find((image) => image.isCover) ?? entry.images[0];
 
   return (
     <PressableCard
       style={{ aspectRatio: 1 }}
       onPress={() => router.push({ pathname: '/entry/[id]', params: { id: entry.id } })}>
-      {cover ? (
-        <Image source={{ uri: cover.cloudinaryUrl }} style={{ flex: 1 }} contentFit="cover" transition={150} />
+      {entry.coverImageUrl ? (
+        <Image source={{ uri: entry.coverImageUrl }} style={{ flex: 1 }} contentFit="cover" transition={150} />
       ) : (
         <View style={{ flex: 1, backgroundColor: theme.backgroundSelected }} />
       )}

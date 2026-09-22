@@ -1,3 +1,4 @@
+import type { JournalBlock } from './journal-blocks';
 import { parseTiptapDoc, type TiptapNode } from './tiptap';
 
 const BLOCK_TYPES = new Set(['paragraph', 'heading', 'blockquote', 'listItem', 'codeBlock']);
@@ -27,4 +28,25 @@ export function extractPlainText(doc: TiptapNode | string): string {
   if (current.trim()) lines.push(current.trim());
 
   return lines.filter(Boolean).join('\n').trim();
+}
+
+/** Flattens an entry's ordered blocks into plain text for the denormalized
+ * `bodyPlainText` search/snippet column — one text extract per block, joined
+ * in document order. */
+export function extractPlainTextFromBlocks(blocks: JournalBlock[]): string {
+  const parts = blocks.map((block) => {
+    switch (block.type) {
+      case 'text':
+        return extractPlainText(block.content as TiptapNode);
+      case 'quote':
+        return block.author ? `${block.text} — ${block.author}` : block.text;
+      case 'photos':
+        return block.photos
+          .map((photo) => photo.caption)
+          .filter((caption): caption is string => Boolean(caption))
+          .join('\n');
+    }
+  });
+
+  return parts.filter(Boolean).join('\n\n').trim();
 }

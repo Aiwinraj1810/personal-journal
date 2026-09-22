@@ -6,11 +6,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { EntryOptionsSheet } from '@/components/entry/entry-options-sheet';
 import { MoodBadge } from '@/components/entry/mood-badge';
-import { RichContentView } from '@/components/entry/rich-content-view';
+import { JournalBlockRenderer } from '@/components/journal/journal-block-renderer';
 import { IconButton } from '@/components/ui/icon-button';
 import { deleteEntry, useEntry } from '@/hooks/use-entries';
 import { useTheme } from '@/hooks/use-theme';
-import { destroyImage } from '@/lib/cloudinary';
 import { formatHeaderDate } from '@/lib/date';
 
 export default function EntryDetailScreen() {
@@ -29,7 +28,6 @@ export default function EntryDetailScreen() {
         text: 'Delete',
         style: 'destructive',
         onPress: async () => {
-          await Promise.all(entry!.images.map((img) => destroyImage(img.cloudinaryPublicId).catch(() => {})));
           await deleteEntry(entry!.id);
           router.back();
         },
@@ -62,11 +60,17 @@ export default function EntryDetailScreen() {
             </Text>
           </View>
 
-          {/* Any photo the entry has lives inline in the body content itself
-              (inserted at the cursor while writing), so it renders here at
-              its natural position — not hoisted to a separate hero image —
-              which is what gives this the "news article" flow. */}
-          <RichContentView bodyJson={entry.bodyJson} />
+          {entry.blocks.length === 0 ? (
+            <Text className="font-sans text-[16px]" style={{ color: theme.textSecondary }}>
+              No content.
+            </Text>
+          ) : (
+            <View className="gap-four">
+              {entry.blocks.map((block) => (
+                <JournalBlockRenderer key={block.id} block={block} mode="read" />
+              ))}
+            </View>
+          )}
         </View>
       </ScrollView>
 

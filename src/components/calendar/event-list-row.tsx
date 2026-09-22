@@ -17,6 +17,7 @@ export type EventListRowProps = { event: CalendarEvent; occursOn: string };
 
 export function EventListRow({ event, occursOn }: EventListRowProps) {
   const theme = useTheme();
+  const reminderCount = event.reminders.filter((r) => r.enabled).length;
 
   return (
     <PressableCard
@@ -33,6 +34,16 @@ export function EventListRow({ event, occursOn }: EventListRowProps) {
           {event.time ? `${formatShortDate(occursOn)} · ${event.time}` : formatShortDate(occursOn)}
         </Text>
       </View>
+      {reminderCount > 0 && (
+        <View className="flex-row items-center gap-half">
+          <Icon name="notifications" size={14} muted />
+          {reminderCount > 1 && (
+            <Text className="font-sans text-[12px]" style={{ color: theme.textSecondary }}>
+              {reminderCount}
+            </Text>
+          )}
+        </View>
+      )}
     </PressableCard>
   );
 }
