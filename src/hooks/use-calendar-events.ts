@@ -4,20 +4,22 @@ import { useMemo } from 'react';
 
 import { db } from '@/db/client';
 import { type CalendarEventType, type EventRecurrence, calendarEventReminders, calendarEvents } from '@/db/schema';
-import { type DateKey, fromDateKey, projectYearly, toDateKey } from '@/lib/date';
+import { type DateKey, toDateKey } from '@/lib/date';
 import { uuid } from '@/lib/id';
 import { cancelReminderNotification, ensureNotificationPermission, scheduleReminder, type ReminderParentEvent } from '@/lib/notifications';
+import { nextOccurrenceOnOrAfter, occurrencesInRange, occursOn, type RecurringItem } from '@/lib/recurrence';
 import { offsetToColumns, type ReminderOffset } from '@/lib/reminders';
 
 export type CalendarEventReminder = typeof calendarEventReminders.$inferSelect;
 export type CalendarEvent = typeof calendarEvents.$inferSelect & { reminders: CalendarEventReminder[] };
 
-/** An event occurrence projected onto a specific calendar date — for a 'yearly'
- * event this date differs from `event.date` (which keeps the original/birth year). */
+/** An event occurrence projected onto a specific calendar date — for a
+ * recurring event this date differs from `event.date` (the original anchor,
+ * kept as-is so e.g. a birthday's original year is never lost). */
 export type EventOccurrence = { event: CalendarEvent; occursOn: DateKey };
 
-function occursInYear(event: CalendarEvent, year: number): DateKey {
-  return event.recurrence === 'yearly' ? projectYearly(event.date, year) : event.date;
+function asRecurringItem(event: CalendarEvent): RecurringItem {
+  return { date: event.date, recurrence: event.recurrence, recurrenceEndDate: event.recurrenceEndDate };
 }
 
 /** Live query of every calendar event with its reminders — the table is small
@@ -37,13 +39,12 @@ export function useCalendarEvent(id: string | undefined): CalendarEvent | undefi
 /** All event occurrences landing on one calendar day. */
 export function useEventsForDate(date: DateKey): EventOccurrence[] {
   const { events } = useAllEvents();
-  const year = fromDateKey(date).getFullYear();
   return useMemo(
     () =>
       events
-        .filter((event) => occursInYear(event, year) === date)
+        .filter((event) => occursOn(asRecurringItem(event), date))
         .map((event) => ({ event, occursOn: date })),
-    [events, date, year],
+    [events, date],
   );
 }
 
@@ -52,12 +53,10 @@ export function useEventsForDate(date: DateKey): EventOccurrence[] {
 export function useEventDatesInRange(start: DateKey, end: DateKey): Set<DateKey> {
   const { events } = useAllEvents();
   return useMemo(() => {
-    const years = new Set([fromDateKey(start).getFullYear(), fromDateKey(end).getFullYear()]);
     const result = new Set<DateKey>();
     for (const event of events) {
-      for (const year of years) {
-        const occursOn = occursInYear(event, year);
-        if (occursOn >= start && occursOn <= end) result.add(occursOn);
+      for (const occursOnDate of occurrencesInRange(asRecurringItem(event), start, end)) {
+        result.add(occursOnDate);
       }
     }
     return result;
@@ -70,18 +69,10 @@ export function useUpcomingEvents(limit = 10): EventOccurrence[] {
   const { events } = useAllEvents();
   return useMemo(() => {
     const today = toDateKey(new Date());
-    const thisYear = new Date().getFullYear();
-    const occurrences = events.map((event) => {
-      let occursOn = occursInYear(event, thisYear);
-      if (event.recurrence === 'yearly' && occursOn < today) {
-        occursOn = occursInYear(event, thisYear + 1);
-      }
-      return { event, occursOn };
-    });
-    return occurrences
-      .filter((o) => o.occursOn >= today)
-      .sort((a, b) => a.occursOn.localeCompare(b.occursOn))
-      .slice(0, limit);
+    const occurrences = events
+      .map((event) => ({ event, occursOn: nextOccurrenceOnOrAfter(asRecurringItem(event), today, event.time) }))
+      .filter((o): o is { event: CalendarEvent; occursOn: DateKey } => o.occursOn !== null);
+    return occurrences.sort((a, b) => a.occursOn.localeCompare(b.occursOn)).slice(0, limit);
   }, [events, limit]);
 }
 
@@ -94,6 +85,8 @@ export type UpsertEventInput = {
   date: DateKey;
   time: string | null;
   recurrence: EventRecurrence;
+  /** Only meaningful when recurrence !== 'none'; null means "repeats forever". */
+  recurrenceEndDate: DateKey | null;
   reminders: UpsertReminderInput[];
 };
 
@@ -115,6 +108,7 @@ async function scheduleAllReminders(eventId: string, input: UpsertEventInput): P
     date: input.date,
     time: input.time,
     recurrence: input.recurrence,
+    recurrenceEndDate: input.recurrenceEndDate,
   };
 
   for (const reminder of input.reminders) {
@@ -146,6 +140,7 @@ export async function createEvent(input: UpsertEventInput): Promise<{ id: string
     date: input.date,
     time: input.time,
     recurrence: input.recurrence,
+    recurrenceEndDate: input.recurrenceEndDate,
     createdAt: now,
     updatedAt: now,
   });
@@ -158,7 +153,9 @@ export async function createEvent(input: UpsertEventInput): Promise<{ id: string
  * simpler and just as correct as diffing old vs. new reminder rows, since
  * reminders are cheap preset selections (not user-authored content worth
  * preserving identity across an edit), and it guarantees stale notifications
- * never survive a change to date/time/recurrence/reminder selection. */
+ * never survive a change to date/time/recurrence/reminder selection. Editing
+ * a recurring event always edits the whole series — there's no per-
+ * occurrence override, by design (see event-form.tsx). */
 export async function updateEvent(id: string, input: UpsertEventInput): Promise<{ permissionDenied: boolean }> {
   const existingReminders = await db.select().from(calendarEventReminders).where(eq(calendarEventReminders.eventId, id));
   await Promise.all(
@@ -175,6 +172,7 @@ export async function updateEvent(id: string, input: UpsertEventInput): Promise<
       date: input.date,
       time: input.time,
       recurrence: input.recurrence,
+      recurrenceEndDate: input.recurrenceEndDate,
       updatedAt: Date.now(),
     })
     .where(eq(calendarEvents.id, id));
@@ -184,7 +182,9 @@ export async function updateEvent(id: string, input: UpsertEventInput): Promise<
 }
 
 /** Cancels every reminder notification for this event, then deletes the
- * event row (its reminder rows cascade-delete with it at the DB level). */
+ * event row (its reminder rows cascade-delete with it at the DB level). For
+ * a recurring event this cancels the entire series — there's no concept of
+ * deleting a single occurrence. */
 export async function deleteEvent(id: string): Promise<void> {
   const reminders = await db.select().from(calendarEventReminders).where(eq(calendarEventReminders.eventId, id));
   await Promise.all(reminders.filter((r) => r.notificationIdentifier).map((r) => cancelReminderNotification(r.notificationIdentifier!)));

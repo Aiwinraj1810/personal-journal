@@ -2,6 +2,7 @@ import { router } from 'expo-router';
 import { Calendar, type DateData } from 'react-native-calendars';
 
 import { FontFamily } from '@/constants/fonts';
+import { useAppColorScheme } from '@/hooks/use-app-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { type DateKey, toDateKey } from '@/lib/date';
 
@@ -18,6 +19,7 @@ export type CalendarMonthGridProps = {
  * entry; a hollow ring marks days with a birthday/event/reminder. */
 export function CalendarMonthGrid({ monthAnchor, onMonthChange, entryDates, eventDates }: CalendarMonthGridProps) {
   const theme = useTheme();
+  const scheme = useAppColorScheme();
 
   const markedDates: Record<string, { marked?: boolean; dotColor?: string; customStyles?: object }> = {};
   const allDates = new Set([...entryDates, ...eventDates]);
@@ -27,6 +29,12 @@ export function CalendarMonthGrid({ monthAnchor, onMonthChange, entryDates, even
 
   return (
     <Calendar
+      // react-native-calendars caches its generated stylesheet internally and
+      // doesn't reliably regenerate it when the `theme` prop changes at
+      // runtime — without forcing a full remount here, switching Light/Dark
+      // (see the Home screen menu) can leave the grid rendering with a stale
+      // (often black) background instead of picking up the new theme.
+      key={scheme}
       current={toDateKey(monthAnchor)}
       onMonthChange={(date: DateData) => onMonthChange(new Date(date.dateString))}
       onDayPress={(date: DateData) => router.push({ pathname: '/day/[date]', params: { date: date.dateString } })}

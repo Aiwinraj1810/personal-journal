@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
 import { IconButton } from '@/components/ui/icon-button';
 import { TextInput } from '@/components/ui/text-input';
-import { type CalendarEventType } from '@/db/schema';
+import { type CalendarEventType, type EventRecurrence } from '@/db/schema';
 import { type CalendarEvent, createEvent, deleteEvent, updateEvent } from '@/hooks/use-calendar-events';
 import { useTheme } from '@/hooks/use-theme';
 import { fromDateKey, toDateKey } from '@/lib/date';
@@ -18,6 +18,14 @@ const TYPE_OPTIONS: { value: CalendarEventType; label: string }[] = [
   { value: 'event', label: 'Event' },
   { value: 'birthday', label: 'Birthday' },
   { value: 'reminder', label: 'Reminder' },
+];
+
+const RECURRENCE_OPTIONS: { value: EventRecurrence; label: string }[] = [
+  { value: 'none', label: 'None' },
+  { value: 'daily', label: 'Daily' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'yearly', label: 'Yearly' },
 ];
 
 export type EventFormProps = { existingEvent?: CalendarEvent };
@@ -45,14 +53,28 @@ export function EventForm({ existingEvent }: EventFormProps) {
         .filter((r) => r.enabled)
         .map((r) => offsetFromColumns(r.offsetType, r.offsetValue)) ?? [],
   );
+  const [recurrence, setRecurrence] = useState<EventRecurrence>(existingEvent?.recurrence ?? 'none');
+  const [recurrenceEndDate, setRecurrenceEndDate] = useState<Date | null>(
+    existingEvent?.recurrenceEndDate ? fromDateKey(existingEvent.recurrenceEndDate) : null,
+  );
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
+  const [showEndDatePicker, setShowEndDatePicker] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
   function toggleReminder(offset: ReminderOffset) {
     setSelectedReminders((prev) =>
       prev.some((r) => offsetsEqual(r, offset)) ? prev.filter((r) => !offsetsEqual(r, offset)) : [...prev, offset],
     );
+  }
+
+  function handleTypeChange(nextType: CalendarEventType) {
+    setType(nextType);
+    // A Birthday inherently repeats yearly — not a user choice — while
+    // leaving a different type keeps whatever repeat the user had picked,
+    // unless it was only 'yearly' because they'd just come from Birthday.
+    if (nextType === 'birthday') setRecurrence('yearly');
+    else if (recurrence === 'yearly' && type === 'birthday') setRecurrence('none');
   }
 
   function handlePermissionDenied(onDone: () => void) {
@@ -76,7 +98,8 @@ export function EventForm({ existingEvent }: EventFormProps) {
         notes: notes.trim() || null,
         date: toDateKey(date),
         time: allDay ? null : `${String(time.getHours()).padStart(2, '0')}:${String(time.getMinutes()).padStart(2, '0')}`,
-        recurrence: type === 'birthday' ? ('yearly' as const) : ('none' as const),
+        recurrence,
+        recurrenceEndDate: recurrence === 'none' || !recurrenceEndDate ? null : toDateKey(recurrenceEndDate),
         reminders: selectedReminders.map((offset) => ({ offset, enabled: true })),
       };
 
@@ -94,7 +117,11 @@ export function EventForm({ existingEvent }: EventFormProps) {
 
   function handleDelete() {
     if (!existingEvent) return;
-    Alert.alert('Delete this?', 'This can’t be undone.', [
+    const message =
+      existingEvent.recurrence !== 'none'
+        ? 'This repeats — deleting it cancels the entire series, including all future occurrences. This can’t be undone.'
+        : 'This can’t be undone.';
+    Alert.alert('Delete this?', message, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Delete',
@@ -130,7 +157,7 @@ export function EventForm({ existingEvent }: EventFormProps) {
                 <Pressable
                   key={option.value}
                   accessibilityRole="button"
-                  onPress={() => setType(option.value)}
+                  onPress={() => handleTypeChange(option.value)}
                   className="flex-1 items-center rounded-pill py-three"
                   style={{ backgroundColor: selected ? theme.text : theme.backgroundElement }}>
                   <Text className="font-sans-medium text-[14px]" style={{ color: selected ? theme.background : theme.text }}>
@@ -207,6 +234,80 @@ export function EventForm({ existingEvent }: EventFormProps) {
                 />
               )}
             </Field>
+          )}
+
+          {type === 'birthday' ? (
+            <View className="flex-row items-center gap-two rounded-small px-three py-three" style={{ backgroundColor: theme.backgroundElement }}>
+              <Icon name="repeat-outline" size={18} muted />
+              <Text className="font-sans text-[15px]" style={{ color: theme.textSecondary }}>
+                Repeats yearly
+              </Text>
+            </View>
+          ) : (
+            <Field label="Repeat" theme={theme}>
+              <View className="flex-row flex-wrap gap-two">
+                {RECURRENCE_OPTIONS.map((option) => {
+                  const selected = recurrence === option.value;
+                  return (
+                    <Pressable
+                      key={option.value}
+                      accessibilityRole="button"
+                      onPress={() => setRecurrence(option.value)}
+                      className="rounded-pill px-three py-two"
+                      style={{ backgroundColor: selected ? theme.text : theme.backgroundElement }}>
+                      <Text className="font-sans-medium text-[13px]" style={{ color: selected ? theme.background : theme.text }}>
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </Field>
+          )}
+
+          {recurrence !== 'none' && (
+            <Field label="Ends" theme={theme}>
+              <View className="flex-row gap-two">
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => setRecurrenceEndDate(null)}
+                  className="flex-1 items-center rounded-pill py-three"
+                  style={{ backgroundColor: recurrenceEndDate === null ? theme.text : theme.backgroundElement }}>
+                  <Text className="font-sans-medium text-[14px]" style={{ color: recurrenceEndDate === null ? theme.background : theme.text }}>
+                    Never
+                  </Text>
+                </Pressable>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => {
+                    if (!recurrenceEndDate) setRecurrenceEndDate(date);
+                    setShowEndDatePicker((v) => !v);
+                  }}
+                  className="flex-1 items-center rounded-pill py-three"
+                  style={{ backgroundColor: recurrenceEndDate !== null ? theme.text : theme.backgroundElement }}>
+                  <Text className="font-sans-medium text-[14px]" style={{ color: recurrenceEndDate !== null ? theme.background : theme.text }}>
+                    {recurrenceEndDate ? recurrenceEndDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : 'On date'}
+                  </Text>
+                </Pressable>
+              </View>
+              {showEndDatePicker && recurrenceEndDate && (
+                <RNDateTimePicker
+                  value={recurrenceEndDate}
+                  mode="date"
+                  minimumDate={date}
+                  onValueChange={(_event, selected) => {
+                    setShowEndDatePicker(false);
+                    if (selected) setRecurrenceEndDate(selected);
+                  }}
+                />
+              )}
+            </Field>
+          )}
+
+          {existingEvent && recurrence !== 'none' && (
+            <Text className="font-sans text-[12px]" style={{ color: theme.textSecondary }}>
+              This repeats. Saving changes updates the entire series, not just this occurrence.
+            </Text>
           )}
 
           {!allDay && (

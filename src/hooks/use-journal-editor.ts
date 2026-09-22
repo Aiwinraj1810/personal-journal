@@ -1,8 +1,8 @@
 import { CoreBridge, darkEditorCss, darkEditorTheme, defaultEditorTheme, TenTapStartKit, useEditorBridge } from '@10play/tentap-editor';
 import type { JSONContent } from '@tiptap/core';
 import { useMemo } from 'react';
-import { useColorScheme } from 'react-native';
 
+import { useAppColorScheme } from '@/hooks/use-app-color-scheme';
 import { PLAYFAIR_DISPLAY_BOLD_BASE64 } from '@/constants/playfair-display-bold-base64';
 import { PLAYFAIR_DISPLAY_ITALIC_BASE64 } from '@/constants/playfair-display-italic-base64';
 import { PLAYFAIR_DISPLAY_REGULAR_BASE64 } from '@/constants/playfair-display-base64';
@@ -25,7 +25,7 @@ import { PLAYFAIR_DISPLAY_REGULAR_BASE64 } from '@/constants/playfair-display-ba
  * the toolbar correctly flips the `<strong>`/`<em>` marks but has nothing to
  * visibly render with — which is exactly the bug this fixes.
  */
-function coreCss(scheme: ReturnType<typeof useColorScheme>): string {
+function coreCss(scheme: ReturnType<typeof useAppColorScheme>): string {
   return `
     @font-face {
       font-family: 'Playfair Display';
@@ -81,7 +81,7 @@ function coreCss(scheme: ReturnType<typeof useColorScheme>): string {
  * document) or undefined for a brand new block. Scoped to text only — photos
  * are never inserted into this editor, they live in their own PhotoBlock. */
 export function useJournalEditor(initialContent?: JSONContent) {
-  const scheme = useColorScheme();
+  const scheme = useAppColorScheme();
 
   const bridgeExtensions = useMemo(() => [...TenTapStartKit, CoreBridge.configureCSS(coreCss(scheme))], [scheme]);
 

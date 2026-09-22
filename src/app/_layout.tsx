@@ -11,12 +11,12 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useState } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
-import { useColorScheme } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { migrateLegacyBlocks } from '@/db/migrate-legacy-blocks';
 import { DrizzleStudioDevTools, useDatabaseMigrations } from '@/db/provider';
+import { useAppColorScheme } from '@/hooks/use-app-color-scheme';
 import { reconcileReminders } from '@/lib/reminder-reconciliation';
 
 SplashScreen.preventAutoHideAsync();
@@ -26,7 +26,7 @@ export const unstable_settings = {
 };
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
+  const colorScheme = useAppColorScheme();
   const [fontsLoaded] = useFonts({
     PlayfairDisplay_400Regular,
     PlayfairDisplay_500Medium,

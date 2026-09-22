@@ -7,8 +7,11 @@ export type MoodCode = 'great' | 'good' | 'okay' | 'low' | 'awful';
 /** 'birthday' | 'event' | 'reminder' */
 export type CalendarEventType = 'birthday' | 'event' | 'reminder';
 
-/** 'none' | 'yearly' — only birthdays use 'yearly' today. */
-export type EventRecurrence = 'none' | 'yearly';
+/** Birthdays are always 'yearly' (forced, not user-chosen). Events default to
+ * 'none' but may repeat daily/weekly/monthly/yearly. No interval (e.g. "every
+ * 2 weeks") yet — every native expo-notifications repeating trigger is a
+ * fixed period of 1, and the UI stays simpler without it; see @/lib/recurrence. */
+export type EventRecurrence = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly';
 
 /** How long before (or "at") the parent Event/Birthday's date+time a reminder
  * fires. See @/lib/reminders for the in-memory `ReminderOffset` union this
@@ -76,6 +79,13 @@ export const calendarEvents = sqliteTable(
     /** 'HH:mm' 24h, nullable — null means all-day, no notification time. */
     time: text('time'),
     recurrence: text('recurrence').$type<EventRecurrence>().notNull().default('none'),
+    /** 'YYYY-MM-DD', nullable — only meaningful when recurrence !== 'none'.
+     * Null means "repeats forever" (the common case, and the only one a
+     * native expo-notifications repeating trigger can express — see
+     * @/lib/notifications). A set end date is honored for occurrence/
+     * Upcoming display and for best-effort notification cleanup via the
+     * startup reconciliation pass, not by the notification trigger itself. */
+    recurrenceEndDate: text('recurrence_end_date'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },

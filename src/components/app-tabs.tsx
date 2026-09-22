@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import { NativeTabs } from 'expo-router/unstable-native-tabs';
-import { useColorScheme } from 'react-native';
 
 import { Colors } from '@/constants/theme';
+import { useAppColorScheme } from '@/hooks/use-app-color-scheme';
 
 const { VectorIcon } = NativeTabs.Trigger;
 
@@ -14,8 +14,8 @@ function icon(defaultName: keyof (typeof Ionicons)['glyphMap'], selectedName: ke
 }
 
 export default function AppTabs() {
-  const scheme = useColorScheme();
-  const colors = Colors[scheme === 'unspecified' || !scheme ? 'light' : scheme];
+  const scheme = useAppColorScheme();
+  const colors = Colors[scheme];
 
   return (
     <NativeTabs

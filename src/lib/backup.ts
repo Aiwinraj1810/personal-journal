@@ -12,8 +12,8 @@ import { uuid } from './id';
 import { cancelReminderNotification, scheduleReminder, type ReminderParentEvent } from './notifications';
 import { offsetFromColumns } from './reminders';
 
-export const BACKUP_FORMAT_VERSION = 3;
-const SUPPORTED_BACKUP_VERSIONS = [1, 2, 3];
+export const BACKUP_FORMAT_VERSION = 4;
+const SUPPORTED_BACKUP_VERSIONS = [1, 2, 3, 4];
 
 export type BackupPayload = {
   backupFormatVersion: number;
@@ -210,6 +210,7 @@ export async function importBackup(): Promise<ImportResult | null> {
           date: event.date,
           time: event.time,
           recurrence: event.recurrence,
+          recurrenceEndDate: event.recurrenceEndDate,
         };
         const notificationIdentifier = await scheduleReminder(parent, offsetFromColumns(r.offsetType, r.offsetValue));
         if (notificationIdentifier) {

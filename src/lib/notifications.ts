@@ -2,7 +2,7 @@ import * as Notifications from 'expo-notifications';
 
 import type { CalendarEventType, EventRecurrence } from '@/db/schema';
 
-import { type DateKey, fromDateKey } from './date';
+import { type DateKey, fromDateKey, toDateKey } from './date';
 import { offsetMinutes, type ReminderOffset } from './reminders';
 
 Notifications.setNotificationHandler({
@@ -42,21 +42,34 @@ export type ReminderParentEvent = {
    * anchored (even "1 day before" needs an hour/minute to fire at). */
   time: string | null;
   recurrence: EventRecurrence;
+  /** Only meaningful when recurrence !== 'none'. A native repeating trigger
+   * (daily/weekly/monthly/yearly) has no way to express "until this date" —
+   * so a set end date is honored here only as an upfront "has it already
+   * ended?" check; ongoing enforcement is the startup reconciliation pass's
+   * job (see @/lib/reminder-reconciliation), which cancels reminders whose
+   * parent's end date has since passed. */
+  recurrenceEndDate: DateKey | null;
 };
 
 /** Schedules one local notification for one reminder's offset against its
  * parent Event/Birthday. Returns null when there's nothing to schedule: the
- * parent has no time, or (for a non-recurring parent) the computed fire
- * moment has already passed. Doesn't cancel anything itself — callers own
- * that (the DAO layer cancels+deletes every existing reminder row for an
- * event before recreating them on save, see use-calendar-events.ts). */
+ * parent has no time, its recurrence has already ended, or (for a
+ * non-recurring parent) the computed fire moment has already passed.
+ * Doesn't cancel anything itself — callers own that (the DAO layer cancels+
+ * deletes every existing reminder row for an event before recreating them on
+ * save, see use-calendar-events.ts). */
 export async function scheduleReminder(event: ReminderParentEvent, offset: ReminderOffset): Promise<string | null> {
   if (!event.time) return null;
+  if (event.recurrenceEndDate && event.recurrenceEndDate < toDateKey(new Date())) return null;
 
   const [hourStr, minuteStr] = event.time.split(':');
   const anchor = fromDateKey(event.date);
   anchor.setHours(Number(hourStr), Number(minuteStr), 0, 0);
 
+  // The offset shifts the anchor moment backward; each recurrence type below
+  // reads whichever of fireAt's components it needs (day/month/weekday/
+  // hour/minute), so a day-level offset correctly rolls across week/month/
+  // year boundaries for free via ordinary Date arithmetic.
   const fireAt = new Date(anchor.getTime() - offsetMinutes(offset) * 60_000);
 
   const content: Notifications.NotificationContentInput = {
@@ -64,30 +77,50 @@ export async function scheduleReminder(event: ReminderParentEvent, offset: Remin
     body: event.notes ?? undefined,
   };
 
-  if (event.recurrence === 'yearly') {
-    // A reminder on a yearly-recurring parent (a birthday) must itself recur
-    // yearly, anchored at the offset-shifted day/month — not fire once.
-    // `fireAt`'s month/day/hour/minute already reflect the offset, including
-    // any month/year rollover (e.g. "7 days before" a Jan 1 birthday lands
-    // in December of the prior year, computed correctly by plain Date math).
-    return Notifications.scheduleNotificationAsync({
-      content,
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.YEARLY,
-        day: fireAt.getDate(),
-        month: fireAt.getMonth(),
-        hour: fireAt.getHours(),
-        minute: fireAt.getMinutes(),
-      },
-    });
+  switch (event.recurrence) {
+    case 'daily':
+      return Notifications.scheduleNotificationAsync({
+        content,
+        trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour: fireAt.getHours(), minute: fireAt.getMinutes() },
+      });
+
+    case 'weekly':
+      return Notifications.scheduleNotificationAsync({
+        content,
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+          // expo-notifications weekday: 1 = Sunday … 7 = Saturday; JS Date#getDay(): 0 = Sunday … 6 = Saturday.
+          weekday: fireAt.getDay() + 1,
+          hour: fireAt.getHours(),
+          minute: fireAt.getMinutes(),
+        },
+      });
+
+    case 'monthly':
+      return Notifications.scheduleNotificationAsync({
+        content,
+        trigger: { type: Notifications.SchedulableTriggerInputTypes.MONTHLY, day: fireAt.getDate(), hour: fireAt.getHours(), minute: fireAt.getMinutes() },
+      });
+
+    case 'yearly':
+      return Notifications.scheduleNotificationAsync({
+        content,
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.YEARLY,
+          day: fireAt.getDate(),
+          month: fireAt.getMonth(),
+          hour: fireAt.getHours(),
+          minute: fireAt.getMinutes(),
+        },
+      });
+
+    case 'none':
+      if (fireAt.getTime() <= Date.now()) return null;
+      return Notifications.scheduleNotificationAsync({
+        content,
+        trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: fireAt },
+      });
   }
-
-  if (fireAt.getTime() <= Date.now()) return null;
-
-  return Notifications.scheduleNotificationAsync({
-    content,
-    trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: fireAt },
-  });
 }
 
 export async function cancelReminderNotification(identifier: string): Promise<void> {

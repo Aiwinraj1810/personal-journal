@@ -1,14 +1,17 @@
+import { BottomSheetModal } from '@gorhom/bottom-sheet';
 import { subDays } from 'date-fns';
 import { Redirect, router } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { CalendarWeekStrip } from '@/components/home/calendar-week-strip';
 import { EntriesGridSection } from '@/components/home/entries-grid-section';
 import { EntryListRow } from '@/components/home/entry-list-row';
+import { HomeMenuSheet } from '@/components/home/home-menu-sheet';
 import { MemoriesSection } from '@/components/home/memories-section';
 import { SearchBar } from '@/components/home/search-bar';
+import { UpcomingSection } from '@/components/home/upcoming-section';
 import { Fab } from '@/components/ui/fab';
 import { IconButton } from '@/components/ui/icon-button';
 import { useAppSettings } from '@/hooks/use-app-settings';
@@ -28,6 +31,7 @@ export default function HomeScreen() {
   const theme = useTheme();
   const { isOnboarded, displayName, updatedAt: settingsUpdatedAt } = useAppSettings();
   const [query, setQuery] = useState('');
+  const menuRef = useRef<BottomSheetModal>(null);
 
   const today = useMemo(() => new Date(), []);
   const todayKey = toDateKey(today);
@@ -67,10 +71,14 @@ export default function HomeScreen() {
                 {today.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}
               </Text>
             </View>
-            <IconButton name="ellipsis-horizontal" onPress={() => router.push('/settings')} />
+            <IconButton name="ellipsis-horizontal" onPress={() => menuRef.current?.present()} />
           </View>
 
           <CalendarWeekStrip entryDates={entryDates} />
+
+          <View className="mt-five">
+            <UpcomingSection />
+          </View>
 
           <View className="mt-four">
             <SearchBar value={query} onChangeText={setQuery} />
@@ -106,6 +114,14 @@ export default function HomeScreen() {
           <Fab onPress={() => router.push('/entry/new')} />
         </View>
       </SafeAreaView>
+
+      <HomeMenuSheet
+        ref={menuRef}
+        onOpenSettings={() => {
+          menuRef.current?.dismiss();
+          router.push('/settings');
+        }}
+      />
     </View>
   );
 }

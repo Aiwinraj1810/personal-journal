@@ -1,5 +1,6 @@
 import {
   addDays,
+  differenceInCalendarDays,
   eachDayOfInterval,
   endOfMonth,
   format,
@@ -70,6 +71,17 @@ export function formatShortDate(key: DateKey): string {
 /** "February 9, 2026" — full-month date for the Home memory cards. */
 export function formatLongDate(key: DateKey): string {
   return format(fromDateKey(key), 'MMMM d, yyyy');
+}
+
+/** "Today" / "Tomorrow" / a weekday name (2–6 days out) / an absolute short
+ * date beyond that — for compact Upcoming-style rows. Assumes `key` is on or
+ * after today; a past date just falls through to the absolute-date case. */
+export function formatRelativeDate(key: DateKey): string {
+  const days = differenceInCalendarDays(fromDateKey(key), new Date());
+  if (days === 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  if (days > 1 && days <= 6) return format(fromDateKey(key), 'EEEE');
+  return formatShortDate(key);
 }
 
 /** "20:35" — 24h time from a unix-ms timestamp, for entry list rows. */
