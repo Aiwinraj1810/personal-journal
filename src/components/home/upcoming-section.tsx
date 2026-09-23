@@ -61,7 +61,7 @@ export function UpcomingSection() {
       {isEmpty ? (
         <View className="flex-row items-center justify-between">
           <Text className="font-sans text-[14px]" style={{ color: theme.textSecondary, opacity: 0.6 }}>
-            All caught up
+            All caught up ss
           </Text>
           <Pressable accessibilityRole="button" accessibilityLabel="Dismiss" onPress={handleDismiss} hitSlop={8}>
             <Icon name="close" size={16} muted />
