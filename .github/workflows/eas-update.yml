@@ -1,0 +1,44 @@
+name: Publish EAS Update
+
+# Every push to master publishes an OTA update to the "master" channel — the
+# same channel the `preview` EAS Build profile is wired to (see eas.json).
+# This is a JS/asset-only push: it updates any already-installed build whose
+# runtimeVersion still matches (see app.json's "fingerprint" policy). It does
+# NOT compile a new native binary and is not subject to EAS Build's queue —
+# a new `eas build` is only needed when native code changes.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: {}
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for EXPO_TOKEN
+        run: |
+          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "You must set EXPO_TOKEN as a repo secret (create one at expo.dev/accounts/[account]/settings/access-tokens)."
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Publish update
+        run: eas update --auto --non-interactive
